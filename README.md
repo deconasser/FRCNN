@@ -65,7 +65,7 @@ If your venv works at first but then stops working later when using PIP, you mig
 
 Now PyTorch can be installed:
 
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm5.7
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.0
 
 Let's verify PyTorch was installed correctly with GPU support, so lets first enter the Python console.
 
