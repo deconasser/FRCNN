@@ -2,13 +2,15 @@ from voc_dataset import VOCDataset
 import torch
 from torch.utils.data import DataLoader
 from torchvision.transforms import ToTensor
-from torchvision.models.detection import fasterrcnn_mobilenet_v3_large_fpn, FasterRCNN_MobileNet_V3_Large_FPN_Weights
+from torchvision.models.detection import fasterrcnn_mobilenet_v3_large_320_fpn, FasterRCNN_MobileNet_V3_Large_320_FPN_Weights
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from tqdm.autonotebook import tqdm
 import argparse
 import os
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
+from torchmetrics.detection.mean_ap import MeanAveragePrecision
+from pprint import pprint
 def collate_fn(batch):
     images, labels = zip(*batch)
     return list(images), list(labels)
@@ -45,14 +47,14 @@ def train(args):
 
     val_dataset = VOCDataset(root=args.data_path, year="2012", image_set="val", download=False, transform=transform)
     val_dataloader = DataLoader(
-        dataset=train_dataset,
+        dataset=val_dataset,
         batch_size=batch_size,
         num_workers=2,
         shuffle=True,
         collate_fn=collate_fn
     )
 
-    model = fasterrcnn_mobilenet_v3_large_fpn(weights=FasterRCNN_MobileNet_V3_Large_FPN_Weights.DEFAULT)
+    model = fasterrcnn_mobilenet_v3_large_320_fpn(weights=FasterRCNN_MobileNet_V3_Large_320_FPN_Weights.DEFAULT, trainable_backbone_layers=0)
     in_channels = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_channels=in_channels, num_classes=len(train_dataset.categories))
     model.to(device)
@@ -81,7 +83,7 @@ def train(args):
             optimizer.zero_grad()
             final_losses.backward()
             optimizer.step()
-            train_loss.append(final_losses)
+            train_loss.append(final_losses.item())
             mean_loss = np.mean(train_loss)
             progress_bar.set_description("Epoch {}/{}. Loss {:0.4f}".format(epoch+1, num_epochs, mean_loss))
             writer.add_scalar("Train/Loss", mean_loss, epoch*len(train_dataloader) + iter)
@@ -89,11 +91,31 @@ def train(args):
         #VALIDATION PHASE
         model.eval()
         progress_bar = tqdm(val_dataloader, colour="cyan")
-        val_loss = []
+        metric = MeanAveragePrecision(iou_type="bbox")
         for iter, (images, labels) in enumerate(progress_bar):
             images = [image.to(device) for image in images]
             with torch.no_grad():
                 outputs = model(images)
+            preds = []
+            target = []
+            for output in outputs:
+                preds.append({
+                    "boxes": output["boxes"].to("cpu"),
+                    "scores": output["scores"].to("cpu"),
+                    "labels": output["labels"].to("cpu"),
+                })
+            for label in labels:
+                target.append({
+                    "boxes": label["boxes"],
+                    "labels": label["labels"],
+                })
+            metric.update(preds, target)
+
+        result = metric.compute()
+        pprint(result)
+        writer.add_scalar("Val/mAP", result["map"], epoch)
+        writer.add_scalar("Val/mAP_50", result["map_50"], epoch)
+        writer.add_scalar("Val/mAP_75", result["map_75"], epoch)
 
 
 if __name__ == '__main__':
